@@ -30,6 +30,7 @@ Cloudflare Tunnel  →  oauth_proxy :8770  →  stackchan-mcp gateway :8767
 | 音频推不出去 | TTS 合成成功但设备不出声 | 缺 `opuslib`（`patches/`） |
 | 自定义表情包被拒 | 设备退回固件默认表情，`set_avatar` 全无效 | 放开网关尺寸校验（`patches/`） |
 | STT 模型下不动（中国大陆） | `listen` 卡在 Loading model | HF 镜像 + 禁 Xet（`patches/`） |
+| 开机版本检查等超时 | 设备开机后一两分钟才连上网关 | `cloud/fake_ota.py` — 永远回"已是最新版" |
 | 断线后一身"裸奔" | 重连后表情丢失、音量亮度被重置 | `cloud/reflex.py` — 反射弧守护进程 |
 
 踩坑全录在 [`patches/README.md`](patches/README.md)，每条都有症状 / 根因 / 修改 / 验证。
@@ -40,6 +41,7 @@ Cloudflare Tunnel  →  oauth_proxy :8770  →  stackchan-mcp gateway :8767
 | 目录 | 内容 |
 | --- | --- |
 | `cloud/oauth_proxy.py` | OAuth 2.1 门：让 claude.ai 自定义连接器能连上你的网关。单租户，一个门禁密钥。 |
+| `cloud/fake_ota.py` | 假 OTA 端点：让设备开机的版本检查秒过，不然它会等到超时才连网关。 |
 | `cloud/reflex.py` | 反射弧守护进程：重连自动补表情/恢复设备偏好、说完自动收表情、摸头反馈、待机小动作与省电。 |
 | `cloud/restore.sh` | 上游重装（`uv tool install --force`）会冲掉包目录里的补丁，这个脚本一键打回来。 |
 | `patches/` | 对上游网关的 4 处修改：说明 + 幂等打补丁脚本。 |

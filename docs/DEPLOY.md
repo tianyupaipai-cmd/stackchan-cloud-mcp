@@ -66,7 +66,42 @@ systemctl restart stackchan-gateway
 **每次 `uv tool install --force` 重装上游后都要重打**，或直接跑 `sh cloud/restore.sh`。
 这一步不做的话：设备约 90 秒掉线一次，且自定义表情包会被拒。
 
-## 3. 设备连上来
+## 3. 假 OTA（别跳过）
+
+xiaozhi-esp32 系固件**开机时会先做一次 OTA 版本检查**。指向自建服务器后，
+原厂 OTA 地址不再适用，这个检查会一直等到超时——表现为
+**设备开机后迟迟不连网关**（弱信号下可能拖一两分钟，很容易被误判成"连不上"）。
+
+`cloud/fake_ota.py` 永远回答"已是最新版"，让设备秒过检查，顺带回一个服务器时间供设备对时。
+
+`/etc/systemd/system/stackchan-fake-ota.service`：
+
+```ini
+[Unit]
+Description=Fake OTA endpoint for StackChan boot check
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -u /root/stackchan/fake_ota.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl enable --now stackchan-fake-ota
+curl http://127.0.0.1:8768/     # 应返回 {"firmware":{"version":"0.0.1","url":""},...}
+```
+
+然后在设备侧把 OTA 地址指向 `http://<VPS_IP>:8768/`（在哪配取决于你的固件，
+通常在配网页面或 config 里）。**记得云厂商安全组也放行 8768。**
+
+> `READ_TIMEOUT_S` 默认 75 秒是有原因的：设备信号弱时 POST 体会分片慢慢到，
+> 默认超时会掐断连接，导致设备把整个开机流程重来一遍。
+
+## 4. 设备连上来
 
 按你固件的方式把设备的服务端地址指向 `ws://<VPS_IP>:8765/`。
 连上后网关日志会出现：
@@ -77,7 +112,7 @@ ESP32 ready: device=<mac> tools=NN
 
 没出现就先查云厂商安全组是否放行 8765。
 
-## 4. OAuth 门（让 claude.ai 能连）
+## 5. OAuth 门（让 claude.ai 能连）
 
 claude.ai 的自定义连接器只认 OAuth 2.1（DCR + Authorization Code + PKCE），
 不接受静态 token，所以需要这个门。
@@ -109,7 +144,7 @@ WantedBy=multi-user.target
 
 监听 `127.0.0.1:8770`。
 
-## 5. Cloudflare Tunnel
+## 6. Cloudflare Tunnel
 
 ```bash
 cloudflared tunnel login
@@ -143,7 +178,7 @@ curl https://<你的域名>/.well-known/oauth-authorization-server   # 应返回
 curl -o /dev/null -w '%{http_code}\n' https://<你的域名>/mcp       # 应返回 401
 ```
 
-## 6. 反射弧（强烈建议）
+## 7. 反射弧（强烈建议）
 
 没有它：设备断电重连后表情丢失、音量亮度被重置、表情停在最后一次设置的脸上。
 
@@ -175,7 +210,7 @@ WantedBy=multi-user.target
 它会：设备重连 → 重推表情包 + 通电眨眼 + 强制回 idle + 恢复设备偏好（音量/亮度/自动松扭矩）；
 `say` 结束 → 延时收回 idle；摸头 → 表情+灯反馈；长时间无互动 → 待机小动作与降亮度。
 
-## 7. 加进 claude.ai
+## 8. 加进 claude.ai
 
 设置 → 连接器 → 添加自定义连接器 → URL 填 `https://<你的域名>/mcp`。
 授权时会弹出一个密钥页，输入 `MCP_GATE_KEY`。
@@ -190,6 +225,7 @@ WantedBy=multi-user.target
 
 | 现象 | 排查 |
 | --- | --- |
+| **开机后一两分钟才连上网关** | 假 OTA 没跑或设备 OTA 地址没改，开机检查在等超时；见第 3 节 |
 | 设备约 90 秒掉一次线 | 心跳补丁没打，见 `patches/` |
 | `say` 返回成功但没声音 | 缺 `opuslib`；日志里没有 `send_pcm_audio` |
 | 设备显示固件默认表情，`set_avatar` 无效 | 表情包尺寸校验没放开；日志搜 `size_mismatch` |
