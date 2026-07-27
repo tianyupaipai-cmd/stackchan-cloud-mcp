@@ -1,0 +1,12 @@
+# 生成物
+*.bin
+avatar_set.bin
+
+# 本地环境
+.env
+*.local
+
+# 系统
+.DS_Store
+__pycache__/
+*.pyc
