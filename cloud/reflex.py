@@ -38,6 +38,17 @@ BASE = os.environ.get("STACKCHAN_MCP_URL", "http://127.0.0.1:8767/mcp")
 TOKEN = os.environ.get("STACKCHAN_TOKEN", "")   # REQUIRED, see module docstring
 BIN = os.environ.get("AVATAR_SET_PATH", "/root/avatar_set.bin")
 GATEWAY_UNIT = os.environ.get("GATEWAY_UNIT", "stackchan-gateway")
+# Optional: xinchao_mood.py writes the face the robot *should* be showing here. When present, every
+# "go back to the normal face" below returns to that face instead of a hard-coded idle.
+FACE_FILE = os.path.expanduser(os.environ.get("FACE_FILE", "~/.cache/stackchan/face.json"))
+
+
+def cur_face():
+    try:
+        with open(FACE_FILE) as f:
+            return json.load(f).get("face") or "idle"
+    except Exception:
+        return "idle"
 
 # --------------------------------------------------------------------------
 # Tunables / 可调参数
@@ -53,6 +64,7 @@ BLUSH_HOLD_S = 6         # s   how long the blush face + LEDs stay on
 BLUSH_RECOVER_S = 3      # s   `happy` face lingers before returning to idle
 
 IDLE_GRACE_S = 4.0       # s   extra delay after say() duration before idle reset
+IDLE_MOTION = os.environ.get("IDLE_MOTION", "1") != "0"   # set IDLE_MOTION=0 when xinchao_mood.py drives the head
 IDLE_MOTION_AFTER = 40   # s   idle time before micro-motions start
 IDLE_MOTION_MIN = 45     # s   lower bound of the random micro-motion interval
 IDLE_MOTION_SPAN = 60    # s   random span added on top of IDLE_MOTION_MIN
@@ -153,7 +165,7 @@ def push_avatar():
         # load_avatar_set only replaces frames; it does not reset the current
         # face index, so after a reconnect the device may still show the old
         # face (e.g. happy). Force it back to idle.
-        call("set_avatar", {"face": "idle"})
+        call("set_avatar", {"face": cur_face()})
         restore_settings()
     except Exception as e:
         print("[reflex] avatar push failed:", e, flush=True)
@@ -176,7 +188,7 @@ def idle_watch():
                     continue
                 _idle_due = 0.0
             try:
-                call("set_avatar", {"face": "idle"}, timeout=30)
+                call("set_avatar", {"face": cur_face()}, timeout=30)
                 print("[reflex] watchdog reset face to idle", flush=True)
             except Exception as e:
                 print("[reflex] idle reset failed:", e, flush=True)
@@ -217,14 +229,14 @@ def touch_loop():
                 standby = True
                 try:
                     call("set_brightness", {"brightness": STANDBY_BRIGHTNESS}, timeout=20)
-                    call("set_avatar", {"face": "idle"}, timeout=20)
+                    call("set_avatar", {"face": cur_face()}, timeout=20)
                     print("[reflex] idle timeout, entering standby", flush=True)
                 except Exception:
                     pass
             # Idle micro-motion: occasional look-around so the device does not
             # look frozen while nobody interacts with it.
             global _last_idle_motion, _idle_gap
-            if (now - last_activity > IDLE_MOTION_AFTER
+            if (IDLE_MOTION and now - last_activity > IDLE_MOTION_AFTER
                     and now - _last_idle_motion > _idle_gap):
                 _last_idle_motion = now
                 # pseudo-random interval, IDLE_MOTION_MIN .. +IDLE_MOTION_SPAN
@@ -252,7 +264,7 @@ def touch_loop():
                     call("set_avatar", {"face": "happy"}, timeout=20)
                     call("clear_leds", timeout=20)
                     time.sleep(BLUSH_RECOVER_S)
-                    call("set_avatar", {"face": "idle"}, timeout=20)
+                    call("set_avatar", {"face": cur_face()}, timeout=20)
                 except Exception as e:
                     print("[reflex] reaction failed:", e, flush=True)
         except Exception:

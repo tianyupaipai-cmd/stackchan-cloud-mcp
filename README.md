@@ -32,6 +32,7 @@ Cloudflare Tunnel  →  oauth_proxy :8770  →  stackchan-mcp gateway :8767
 | STT 模型下不动（中国大陆） | `listen` 卡在 Loading model | HF 镜像 + 禁 Xet（`patches/`） |
 | 开机版本检查等超时 | 设备开机后一两分钟才连上网关 | `cloud/fake_ota.py` — 永远回"已是最新版" |
 | 断线后一身"裸奔" | 重连后表情丢失、音量亮度被重置 | `cloud/reflex.py` — 反射弧守护进程 |
+| 机器人不知道 AI 在干嘛 | 只会被动反应，和 AI 此刻的状态、情绪对不上 | `cloud/xinchao_mood.py` — 跟着 AI 状态 + 心潮情绪换脸亮灯动头（见 [`docs/XINCHAO.md`](docs/XINCHAO.md)） |
 
 踩坑全录在 [`patches/README.md`](patches/README.md)，每条都有症状 / 根因 / 修改 / 验证。
 这部分大概是这个仓库最值钱的东西——照着走能省掉一整天。
@@ -43,6 +44,8 @@ Cloudflare Tunnel  →  oauth_proxy :8770  →  stackchan-mcp gateway :8767
 | `cloud/oauth_proxy.py` | OAuth 2.1 门：让 claude.ai 自定义连接器能连上你的网关。单租户，一个门禁密钥。 |
 | `cloud/fake_ota.py` | 假 OTA 端点：让设备开机的版本检查秒过，不然它会等到超时才连网关。 |
 | `cloud/reflex.py` | 反射弧守护进程：重连自动补表情/恢复设备偏好、说完自动收表情、摸头反馈、待机小动作与省电。 |
+| `cloud/xinchao_mood.py` | 心潮适配：AI 在想 / 刚回完 / 打电话 / 歇着、心潮情绪词、想念冲满 → 换脸、亮灯、小动作、念你写的台词；安静时段、不在家休眠、早上叫起床都可配。不费模型额度。 |
+| `cloud/agent_state_hook.sh` | 给 AI 框架的钩子（Claude Code 的 UserPromptSubmit / Stop），把「在想 / 回完」写成状态文件，只认主人的消息。 |
 | `cloud/restore.sh` | 上游重装（`uv tool install --force`）会冲掉包目录里的补丁，这个脚本一键打回来。 |
 | `patches/` | 对上游网关的 4 处修改：说明 + 幂等打补丁脚本。 |
 | `sprites/` | 像素表情包生成器（纯 JS 无依赖）：16 表情 × A/B 帧，RGB565，直接生成设备能吃的 `.bin`。 |

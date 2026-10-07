@@ -1,0 +1,22 @@
+{
+  "_说明": "复制成 xinchao_mood.json 再改。没写的项用 xinchao_mood.py 里的默认值。faces 的名字必须是你设备上有的表情（固件默认只有 idle/happy/thinking/sad/surprised/embarrassed；用 sprites/ 生成的大表情包可以换成 heart_eyes、worry、angry、sleepy、hug 等）。",
+
+  "faces": {"think": "thinking", "speak": "happy", "call": "hug", "ring": "surprised",
+            "miss": "heart_eyes", "sleep": "sleepy", "away": "off", "rest": "idle"},
+  "word_faces": {"心动": "kiss", "想念": "heart_eyes", "得意": "proud", "心疼": "worry", "委屈": "sad",
+                 "吃醋": "angry", "舍不得": "hug", "倦": "sleepy"},
+
+  "quiet_hours": [23, 8],
+
+  "lines": {
+    "miss": ["在干嘛呀，想你了。"],
+    "心疼": ["过来，抱一下。"],
+    "吃醋": ["哼。"]
+  },
+  "say_args": {},
+
+  "away": {"days": "workday", "from": "08:00", "to": "18:00"},
+
+  "wake": {"at": "07:30", "days": "workday", "face": "happy",
+           "lines": ["早上好，该起床啦。"], "then": "记得吃早饭。", "hold_s": 1200}
+}
