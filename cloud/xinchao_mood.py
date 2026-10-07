@@ -105,6 +105,7 @@ def away_now(now):
 # ---------- 网关 ----------
 _sid = None
 _lock = threading.Lock()
+HUSH = [0.0]   # 说话期间灯线程先不发指令：灯一秒几条，和声音挤同一条 WebSocket 到设备，声音会一卡一卡
 
 
 def _post(payload, timeout=20):
@@ -131,6 +132,14 @@ def call(tool, args=None, want=False):
             except Exception:
                 _sid = None
         return None if want else False
+
+
+def say(text):
+    """说一句；说的这段时间里灯停在当前颜色。"""
+    HUSH[0] = time.time() + 10
+    body = call("say", {"text": text, **C["say_args"]}, want=True) or ""
+    m = __import__("re").search(r'duration_ms\\?"?: ?(\d+)', body)
+    HUSH[0] = time.time() + (int(m.group(1)) if m else 3000) / 1000 + 0.8
 
 
 def online():
@@ -162,6 +171,9 @@ class Leds(threading.Thread):
         last_solid = 0
         while True:
             now = time.time()
+            if now < HUSH[0]:
+                time.sleep(0.2)
+                continue
             if self.until and now > self.until:
                 self.set("off")
             if self.mode == "off":
@@ -237,7 +249,7 @@ class Robot:
         if not lines or (not force and (quiet(datetime.now(TZ).hour) or time.time() - self.said.get(key, 0) < C["line_gap_s"])):
             return
         self.said[key] = time.time()
-        call("say", {"text": random.choice(lines), **C["say_args"]})
+        say(random.choice(lines))
 
     def enter(self, scene, word):
         if self.scene == "away" and scene != "away":
@@ -292,9 +304,9 @@ class Robot:
             self.show(w.get("face", C["faces"]["speak"])); self.leds.set("breathe", C["colors"]["wake"], 3.0, hold=w.get("hold_s", 1200), night=True)
             call("move_head", {"yaw": 0, "pitch": C["look_pitch"], "speed": 20})
             if w.get("lines"):
-                call("say", {"text": random.choice(w["lines"]), **C["say_args"]})
+                say(random.choice(w["lines"]))
             if w.get("then"):
-                time.sleep(1.5); call("say", {"text": w["then"], **C["say_args"]})
+                time.sleep(1.5); say(w["then"])
             self.wake_until = now + w.get("hold_s", 1200)
         if now < self.wake_until:
             return
