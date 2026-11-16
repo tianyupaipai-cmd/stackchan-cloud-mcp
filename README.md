@@ -72,6 +72,12 @@ STACKCHAN_TOKEN=... AVATAR_SET_PATH=/root/avatar_set.bin python3 cloud/reflex.py
 
 完整步骤（systemd unit、Cloudflare Tunnel、claude.ai 连接器怎么加）见 [`docs/DEPLOY.md`](docs/DEPLOY.md)。
 
+### Railway + Kelivo
+
+手机使用 **Kelivo** 时，可以用 HTTP MCP + Bearer 密钥直接连接网关。
+仓库提供 `Dockerfile`、`railway.toml` 和统一的 HTTPS/WSS 入口，无需 Cloudflare Tunnel 或 OAuth 代理。
+部署与机器人配置步骤见 [`docs/RAILWAY.md`](docs/RAILWAY.md)。
+
 ## 安全须知
 
 - **所有密钥走环境变量**，仓库里没有任何真实 token、域名、IP。部署时自己设。

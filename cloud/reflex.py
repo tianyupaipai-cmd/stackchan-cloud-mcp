@@ -26,10 +26,12 @@ AVATAR_SET_PATH    Optional. Avatar archive pushed on reconnect,
                    default /root/avatar_set.bin
 GATEWAY_UNIT       Optional. systemd unit followed via journalctl,
                    default stackchan-gateway (upstream unit name)
+GATEWAY_LOG_SOURCE Optional. Set to stdin for a container supervisor that
+                   forwards gateway log lines to this process's stdin.
 
 Deploy as a systemd unit named `stackchan-reflex`.
 """
-import json, os, re, subprocess, threading, time, urllib.request
+import json, os, re, subprocess, sys, threading, time, urllib.request
 
 # --------------------------------------------------------------------------
 # Configuration / 配置
@@ -158,7 +160,10 @@ def restore_settings():
 def push_avatar():
     """Re-upload the avatar archive and bring the face animation back online."""
     try:
-        call("load_avatar_set", {"archive_path": BIN, "mode": "layered", "timeout": 120})
+        result = call("load_avatar_set", {"archive_path": BIN, "mode": "layered", "timeout": 120})
+        if not result or not result.get("ok"):
+            print("[reflex] avatar not loaded:", (result or {}).get("error", "invalid response"), flush=True)
+            return
         print("[reflex] avatar set pushed", flush=True)
         call("set_blink", {"enabled": True})
         print("[reflex] blink/animation enabled", flush=True)
@@ -274,10 +279,14 @@ def touch_loop():
 
 # ---------- Gateway log watcher: reconnect + speech watchdog triggers ----------
 def watch_log():
-    p = subprocess.Popen(
-        ["stdbuf", "-oL", "-eL", "journalctl", "-fu", GATEWAY_UNIT, "-n", "0", "--no-pager"],
-        stdout=subprocess.PIPE, text=True, bufsize=1)
-    for line in p.stdout:
+    if os.environ.get("GATEWAY_LOG_SOURCE") == "stdin":
+        lines = sys.stdin
+    else:
+        p = subprocess.Popen(
+            ["stdbuf", "-oL", "-eL", "journalctl", "-fu", GATEWAY_UNIT, "-n", "0", "--no-pager"],
+            stdout=subprocess.PIPE, text=True, bufsize=1)
+        lines = p.stdout
+    for line in lines:
         if "ESP32 ready" in line:
             print(f"[reflex] device online, pushing avatars in {RECONNECT_DELAY_S:.0f}s",
                   flush=True)
