@@ -108,6 +108,9 @@ class MockDevice:
         self.vision = None
         self.avatar = None
         self.audio = []
+        self.avatar_downloaded = asyncio.Event()
+        self.avatar_reply_allowed = asyncio.Event()
+        self.avatar_reply_allowed.set()
 
     async def run(self):
         await self.ws.send_json({"type": "hello", "version": 1, "features": {"mcp": True}})
@@ -161,6 +164,8 @@ class MockDevice:
                             "checksum": checksum, "error": "load_failed",
                         })
                         continue
+                self.avatar_downloaded.set()
+                await self.avatar_reply_allowed.wait()
                 await self.ws.send_json({"type": "avatar_set_loaded", "ok": True, "checksum": checksum})
 
 
@@ -306,6 +311,33 @@ class RailwayIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertGreater(audio["frame_count"], 0)
             await asyncio.wait_for(device.binary_received.wait(), 3)
             self.assertTrue(all(device.audio))
+
+    async def test_reflex_polling_does_not_steal_pending_avatar_result(self):
+        async with self.device() as device:
+            with patch.object(reflex, "BASE", self.url + "/mcp"), \
+                 patch.object(reflex, "TOKEN", self.token), \
+                 patch.object(reflex, "_SID", None):
+                status = await asyncio.to_thread(reflex.call, "get_status", timeout=5)
+                self.assertTrue(status["connected"])
+                device.avatar_reply_allowed.clear()
+                upload = asyncio.create_task(asyncio.to_thread(
+                    reflex.call, "load_avatar_set", {
+                        "archive_path": str(ROOT / "sprites/avatar_set_v1_16.bin"),
+                        "mode": "layered", "timeout": 5,
+                    }, timeout=8,
+                ))
+                try:
+                    await asyncio.wait_for(device.avatar_downloaded.wait(), 3)
+                    # Reflex polls device status while a long avatar request is
+                    # pending in the same MCP session, as in the Railway logs.
+                    status = await asyncio.to_thread(reflex.call, "get_status", timeout=5)
+                    self.assertTrue(status["connected"], status)
+                finally:
+                    device.avatar_reply_allowed.set()
+                    loaded = await asyncio.wait_for(upload, 10)
+                self.assertIsNotNone(loaded, "Background polling consumed the avatar response")
+                self.assertTrue(loaded.get("ok"), loaded)
+                self.assertEqual(loaded["bytes_transferred"], 537600)
 
     async def test_ota_keep_alive_and_service_failure(self):
         for method, body in (("POST", {"version": "1.0"}), ("GET", None)):

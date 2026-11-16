@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import hmac
+import json
 import logging
 import os
 from pathlib import Path
@@ -167,12 +168,19 @@ def create_app(services: Services, client: ClientSession) -> web.Application:
                 for key, value in forward_headers(upstream.headers).items():
                     response.headers[key] = value
                 await response.prepare(request)
+                bytes_forwarded = 0
                 async for chunk in upstream.content.iter_chunked(65536):
                     await response.write(chunk)
+                    bytes_forwarded += len(chunk)
                 await response.write_eof()
+                if request.path.startswith("/avatar_set/"):
+                    LOG.info("Avatar download forwarded: status=%s content_length=%s bytes=%s",
+                             upstream.status, upstream.content_length, bytes_forwarded)
                 return response
         except (ClientError, OSError, asyncio.TimeoutError) as exc:
             if response is not None and response.prepared:
+                LOG.warning("Upstream response interrupted: path=%s error=%s",
+                            request.path, type(exc).__name__)
                 response.force_close()
                 return response
             LOG.warning("Upstream HTTP request failed: %s", type(exc).__name__)
@@ -193,6 +201,17 @@ def create_app(services: Services, client: ClientSession) -> web.Application:
         async def relay(source, target):
             async for message in source:
                 if message.type == WSMsgType.TEXT:
+                    if source is downstream:
+                        try:
+                            payload = json.loads(message.data)
+                        except (ValueError, TypeError):
+                            payload = None
+                        if isinstance(payload, dict) and payload.get("type") == "avatar_set_loaded":
+                            # Log even late replies whose MCP waiter has timed
+                            # out. Do not log fetch URLs or authorization tokens.
+                            LOG.info("Device avatar result: ok=%r error=%r checksum=%r",
+                                     payload.get("ok"), str(payload.get("error"))[:120],
+                                     str(payload.get("checksum"))[:80])
                     await target.send_str(message.data)
                 elif message.type == WSMsgType.BINARY:
                     await target.send_bytes(message.data)

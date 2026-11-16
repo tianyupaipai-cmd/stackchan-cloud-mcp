@@ -31,7 +31,7 @@ GATEWAY_LOG_SOURCE Optional. Set to stdin for a container supervisor that
 
 Deploy as a systemd unit named `stackchan-reflex`.
 """
-import json, os, re, subprocess, sys, threading, time, urllib.request
+import itertools, json, os, re, subprocess, sys, threading, time, urllib.request
 
 # --------------------------------------------------------------------------
 # Configuration / 配置
@@ -97,8 +97,8 @@ def post(payload, session=None, timeout=180):
     if session:
         headers["mcp-session-id"] = session
     req = urllib.request.Request(BASE, json.dumps(payload).encode(), headers)
-    resp = urllib.request.urlopen(req, timeout=timeout)
-    return resp.headers.get("mcp-session-id"), resp.read().decode()
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.headers.get("mcp-session-id"), resp.read().decode()
 
 
 def _parse(body):
@@ -115,6 +115,8 @@ def _parse(body):
 
 
 _SID = None
+_SESSION_LOCK = threading.Lock()
+_REQUEST_IDS = itertools.count(1)
 def call(tool, args=None, timeout=180):
     """Call an MCP tool. Returns the parsed result dict, or None on parse failure.
 
@@ -122,17 +124,29 @@ def call(tool, args=None, timeout=180):
     next call re-initializes instead of reusing a dead session id.
     """
     global _SID
+    session = None
     try:
-        if _SID is None:
-            _SID, _ = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "protocolVersion": "2024-11-05", "capabilities": {},
-                "clientInfo": {"name": "reflex-vps", "version": "0.2"}}}, timeout=timeout)
-            post({"jsonrpc": "2.0", "method": "notifications/initialized"}, _SID, timeout=timeout)
-        _, body = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                        "params": {"name": tool, "arguments": args or {}}}, _SID, timeout=timeout)
+        # Only session creation is serialized; a long avatar upload must not
+        # block status polling. Concurrent calls need distinct JSON-RPC IDs or
+        # the server can route one call's result into another call's HTTP stream.
+        with _SESSION_LOCK:
+            if _SID is None:
+                new_session, _ = post({"jsonrpc": "2.0", "id": next(_REQUEST_IDS), "method": "initialize", "params": {
+                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": {"name": "reflex-vps", "version": "0.2"}}}, timeout=timeout)
+                post({"jsonrpc": "2.0", "method": "notifications/initialized"}, new_session, timeout=timeout)
+                _SID = new_session
+            session = _SID
+            request_id = next(_REQUEST_IDS)
+        _, body = post({"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+                        "params": {"name": tool, "arguments": args or {}}}, session, timeout=timeout)
         return _parse(body)
     except Exception:
-        _SID = None
+        with _SESSION_LOCK:
+            # An older failed call must not discard a newer session another
+            # thread has already established.
+            if _SID == session:
+                _SID = None
         raise
 
 

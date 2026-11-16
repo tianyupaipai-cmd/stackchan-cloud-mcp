@@ -137,8 +137,15 @@ Kelivo 里的模型负责对话，Railway 网关负责工具执行；这里没�
 | 机器人连接后无法下载表情 | `STACKCHAN_PUBLIC_URL` / 公网域名是否正确，机器人能否访问 HTTPS |
 | 表情加载返回 `content_length_mismatch` | 部署保留下载响应 `Content-Length` 的最新转发代码；机器人会在读取文件前核对这个长度 |
 | 表情加载返回 `load_failed` | 检查表情包与固件布局；`firmware-v1.16.0` 使用 `avatar_set_v1_16.bin` 的 14 帧包，不能使用 40 帧包 |
+| 表情加载返回 `fetch_in_progress` | 机器人已有加载任务；暂停重复调用，查看 `Device avatar result` 和 USB 串口的 `AvatarSetFetcher` 日志 |
+| 表情请求超时、后台显示 `invalid response` | 使用修复后台并发请求编号的最新版本；触摸轮询与表情加载必须使用不同的 JSON-RPC 请求编号 |
 | 日志显示 avatar not loaded | 根据错误排查连接、素材或固件；不会把失败记录成上传成功 |
 | `say` 没有声音 | 查看 Edge TTS 联网及 Opus 日志，确认配套固件使用 WebSocket 协议 v1 |
+
+`Serving avatar set` / HTTP 200 只说明文件下载接口返回了响应，不能确认机器人已经加载。
+转发器会记录 `Avatar download forwarded` 的长度和字节数，以及 `Device avatar result` 的
+`ok` / `error`；即使原工具调用已超时，机器人迟到的结果仍会记录。以设备返回 `ok: true`
+和实机显示为准。USB 串口日志来自电脑上连接机器人 COM 端口的终端窗口。
 
 ## 本地验证与实现
 
