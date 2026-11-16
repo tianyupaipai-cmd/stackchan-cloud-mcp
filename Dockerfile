@@ -11,10 +11,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY deploy/requirements.txt /app/deploy/requirements.txt
-RUN --mount=type=secret,id=build_ca \
-    build_ca=/etc/ssl/certs/ca-certificates.crt \
-    && if [ -f /run/secrets/build_ca ]; then build_ca=/run/secrets/build_ca; fi \
-    && PIP_CERT="$build_ca" pip install --no-cache-dir --require-hashes -r deploy/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r deploy/requirements.txt
 
 COPY cloud /app/cloud
 COPY patches /app/patches

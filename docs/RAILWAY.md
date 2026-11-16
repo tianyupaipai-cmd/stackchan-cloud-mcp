@@ -116,6 +116,7 @@ Kelivo 里的模型负责对话，Railway 网关负责工具执行；这里没�
 
 | 现象 | 检查 |
 | --- | --- |
+| `dockerfile invalid` 且提到 `--mount=type=secret` | 正在构建旧版 Dockerfile；部署此分支最新提交，避免重试旧提交的快照 |
 | 部署立即退出 | 日志是否提示缺少 `STACKCHAN_TOKEN` 或公网域名 |
 | `/healthz` 失败 | 端口是否为 `8080`，查看 Railway 网关启动日志 |
 | Kelivo 返回 401 | 请求头名称、`Bearer ` 空格、密钥是否与 Railway 一致 |
@@ -138,13 +139,10 @@ docker build -t stackchan-cloud-mcp:railway .
 在本机启动时，设置 `STACKCHAN_TOKEN`、`PORT` 和 `STACKCHAN_PUBLIC_URL` 后运行
 `python -m cloud.railway_server`。只有本地测试允许 `http://127.0.0.1:<PORT>`；公网必须使用 HTTPS。
 
-受信任代理使用自签根证书的开发环境，可向 Docker 构建提供包含该根证书的 CA bundle：
-
-```bash
-docker build --secret id=build_ca,src=/path/to/ca-bundle.pem -t stackchan-cloud-mcp:railway .
-```
-
-证书仅在构建步骤中挂载，不写入镜像。整个构建保留 TLS、系统包签名和 Python 依赖哈希校验。
+Railway 使用标准 Dockerfile 和官方 Python 基础镜像，不使用特殊构建挂载。
+构建保留 TLS、系统包签名和 Python 依赖哈希校验。
+本地开发若经过自签证书的受信任代理，应在独立的本地测试基础镜像中配置信任根证书，
+保持仓库的 Railway Dockerfile 不变，不通过跳过证书验证来解决网络问题。
 
 `cloud/railway_server.py` 管理上游网关和可选反射弧进程，在公开的 `$PORT` 上转发：
 
