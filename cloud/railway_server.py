@@ -41,6 +41,7 @@ class Config:
     capture_port: int
     mcp_port: int
     reflex: bool
+    avatar_download_rate: int
     token: str = field(repr=False)
     env: dict[str, str] = field(repr=False)
 
@@ -66,6 +67,9 @@ class Config:
         if len(set(ports)) != len(ports):
             raise ValueError("PORT, WS_PORT, CAPTURE_PORT and MCP_HTTP_PORT must be distinct")
         reflex = env.get("STACKCHAN_ENABLE_REFLEX", "1").lower() in {"1", "true", "yes"}
+        avatar_download_rate = int(env.get("AVATAR_DOWNLOAD_RATE_BPS", str(32 * 1024)))
+        if avatar_download_rate < 0:
+            raise ValueError("AVATAR_DOWNLOAD_RATE_BPS must be non-negative (0 disables pacing)")
         env.update({
             "HOST": "127.0.0.1", "WS_PORT": str(ports[1]), "CAPTURE_PORT": str(ports[2]),
             "MCP_HTTP_HOST": "127.0.0.1", "MCP_HTTP_PORT": str(ports[3]),
@@ -80,7 +84,7 @@ class Config:
         env.setdefault("HF_HUB_DISABLE_XET", "1")
         env.setdefault("IDLE_MOTION", "0")
         env.setdefault("AVATAR_SET_PATH", str(ROOT / "sprites/avatar_set_v1_16.bin"))
-        return cls(public_url, *ports, reflex, token, env)
+        return cls(public_url, *ports, reflex, avatar_download_rate, token, env)
 
 
 def forward_headers(headers, *, request: bool = False, websocket: bool = False) -> dict[str, str]:
@@ -167,15 +171,31 @@ def create_app(services: Services, client: ClientSession) -> web.Application:
                 # responses without one (such as SSE) can still stream normally.
                 for key, value in forward_headers(upstream.headers).items():
                     response.headers[key] = value
+                avatar_download = request.method == "GET" and request.path.startswith("/avatar_set/")
+                rate = config.avatar_download_rate if avatar_download and upstream.status == 200 else 0
+                if rate:
+                    # Best-effort proxy hints: keep the controlled byte stream
+                    # intact rather than compressing or buffering it into a burst.
+                    response.headers["Cache-Control"] = "private, no-store, no-transform"
+                    response.headers["X-Accel-Buffering"] = "no"
                 await response.prepare(request)
+                started = asyncio.get_running_loop().time()
                 bytes_forwarded = 0
-                async for chunk in upstream.content.iter_chunked(65536):
+                previous_size = 0
+                chunk_size = min(2048, rate) if rate else 65536
+                async for chunk in upstream.content.iter_chunked(chunk_size):
+                    if rate and previous_size:
+                        # Only avatar assets are paced. MCP/SSE, audio and the
+                        # WebSocket relay remain independent while this sleeps.
+                        await asyncio.sleep(previous_size / rate)
                     await response.write(chunk)
                     bytes_forwarded += len(chunk)
+                    previous_size = len(chunk)
                 await response.write_eof()
-                if request.path.startswith("/avatar_set/"):
-                    LOG.info("Avatar download forwarded: status=%s content_length=%s bytes=%s",
-                             upstream.status, upstream.content_length, bytes_forwarded)
+                if avatar_download:
+                    LOG.info("Avatar download forwarded: status=%s content_length=%s bytes=%s rate_bps=%s elapsed_s=%.2f",
+                             upstream.status, upstream.content_length, bytes_forwarded, rate,
+                             asyncio.get_running_loop().time() - started)
                 return response
         except (ClientError, OSError, asyncio.TimeoutError) as exc:
             if response is not None and response.prepared:

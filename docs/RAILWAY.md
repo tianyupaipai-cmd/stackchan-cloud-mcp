@@ -115,6 +115,7 @@ Railway 默认表情包适配上游已发布的 `firmware-v1.16.0`：14 帧、16
 | --- | --- |
 | `STACKCHAN_ENABLE_REFLEX` | `1`，启动断线补表情、触摸反馈和说完收表情；设 `0` 可关闭 |
 | `AVATAR_SET_PATH` | `/app/sprites/avatar_set_v1_16.bin`，适配发布版 `firmware-v1.16.0`；使用扩展固件时可覆盖 |
+| `AVATAR_DOWNLOAD_RATE_BPS` | `32768`，表情文件按不超过 2 KiB 的小块发送，约 16 秒传完 14 帧包；设 `0` 恢复不限速发送，用于对照测试 |
 | `IDLE_MOTION` | 此部署默认 `0`；设 `1` 开启待机小动作 |
 | `STACKCHAN_TTS_ENGINE` | `edge-tts` |
 | `STACKCHAN_EDGE_TTS_DEFAULT_VOICE` | `zh-CN-XiaoxiaoNeural` |
@@ -138,6 +139,7 @@ Kelivo 里的模型负责对话，Railway 网关负责工具执行；这里没�
 | 表情加载返回 `content_length_mismatch` | 部署保留下载响应 `Content-Length` 的最新转发代码；机器人会在读取文件前核对这个长度 |
 | 表情加载返回 `load_failed` | 检查表情包与固件布局；`firmware-v1.16.0` 使用 `avatar_set_v1_16.bin` 的 14 帧包，不能使用 40 帧包 |
 | 表情加载返回 `fetch_in_progress` | 机器人已有加载任务；暂停重复调用，查看 `Device avatar result` 和 USB 串口的 `AvatarSetFetcher` 日志 |
+| 云端完整转发后设备仍返回 `read_failed` | 默认启用表情下载的小块匀速发送，用来验证旧固件接收路径对发送节奏的兼容性；它不保证消除公网链路或固件内部的所有中断 |
 | 表情请求超时、后台显示 `invalid response` | 使用修复后台并发请求编号的最新版本；触摸轮询与表情加载必须使用不同的 JSON-RPC 请求编号 |
 | 日志显示 avatar not loaded | 根据错误排查连接、素材或固件；不会把失败记录成上传成功 |
 | `say` 没有声音 | 查看 Edge TTS 联网及 Opus 日志，确认配套固件使用 WebSocket 协议 v1 |
@@ -146,6 +148,8 @@ Kelivo 里的模型负责对话，Railway 网关负责工具执行；这里没�
 转发器会记录 `Avatar download forwarded` 的长度和字节数，以及 `Device avatar result` 的
 `ok` / `error`；即使原工具调用已超时，机器人迟到的结果仍会记录。以设备返回 `ok: true`
 和实机显示为准。USB 串口日志来自电脑上连接机器人 COM 端口的终端窗口。
+表情下载日志同时记录 `rate_bps` 和 `elapsed_s`，便于比较匀速发送和原始发送的设备结果。
+限速只作用于表情文件的成功 GET 响应，使用异步等待；MCP、SSE、音频和 WebSocket 不走此限速。
 
 ## 本地验证与实现
 

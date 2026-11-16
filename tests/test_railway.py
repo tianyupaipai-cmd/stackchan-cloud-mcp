@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 class ConfigurationTests(unittest.TestCase):
     def test_refuses_missing_credentials_or_insecure_public_origin(self):
         for env in ({}, {"STACKCHAN_TOKEN": "test", "STACKCHAN_PUBLIC_URL": "http://example.com"},
-                    {"STACKCHAN_TOKEN": "test", "STACKCHAN_PUBLIC_URL": "https://example.com/mcp"}):
+                    {"STACKCHAN_TOKEN": "test", "STACKCHAN_PUBLIC_URL": "https://example.com/mcp"},
+                    {"STACKCHAN_TOKEN": "test", "STACKCHAN_PUBLIC_URL": "http://127.0.0.1", "AVATAR_DOWNLOAD_RATE_BPS": "-1"}):
             with self.subTest(names=list(env)):
                 with self.assertRaises(ValueError):
                     Config.from_env(env)
@@ -43,6 +44,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("robot.up.railway.app", config.env["MCP_HTTP_ALLOWED_HOSTS"])
         self.assertEqual(config.env["GATEWAY_LOG_SOURCE"], "stdin")
         self.assertEqual(config.env["AVATAR_SET_PATH"], str(ROOT / "sprites/avatar_set_v1_16.bin"))
+        self.assertEqual(config.avatar_download_rate, 32768)
 
     def test_default_avatar_matches_firmware_v1_16_frame_layout(self):
         image_bytes = 160 * 120 * 2
@@ -108,6 +110,7 @@ class MockDevice:
         self.vision = None
         self.avatar = None
         self.audio = []
+        self.avatar_requested = asyncio.Event()
         self.avatar_downloaded = asyncio.Event()
         self.avatar_reply_allowed = asyncio.Event()
         self.avatar_reply_allowed.set()
@@ -143,6 +146,7 @@ class MockDevice:
                 await self.ws.send_json({"type": "mcp", "payload": {
                     "jsonrpc": "2.0", "id": request["id"], "result": result}})
             elif data["type"] == "avatar_set_fetch":
+                self.avatar_requested.set()
                 async with self.client.get(data["url"], headers={"Authorization": "Bearer " + data["token"]}) as response:
                     if response.status != 200:
                         raise AssertionError(f"Public avatar download returned {response.status}")
@@ -185,12 +189,13 @@ class RailwayIntegrationTests(unittest.IsolatedAsyncioTestCase):
                    STACKCHAN_ENABLE_REFLEX="0", **{k: str(v) for k, v in zip(
                        ("PORT", "WS_PORT", "CAPTURE_PORT", "MCP_HTTP_PORT"), ports)})
         env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env["PATH"]
+        env["AVATAR_DOWNLOAD_RATE_BPS"] = "32768"
         self.log = tempfile.TemporaryFile()
         self.process = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "cloud.railway_server", cwd=ROOT, env=env,
             stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True,
         )
-        self.client = ClientSession(timeout=ClientTimeout(total=15), trust_env=False)
+        self.client = ClientSession(timeout=ClientTimeout(total=45), trust_env=False)
         deadline = asyncio.get_running_loop().time() + 40
         while True:
             try:
@@ -297,12 +302,16 @@ class RailwayIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.device() as device:
             headers = await self.initialize()
             archive = ROOT / "sprites/avatar_set_v1_16.bin"
+            started = asyncio.get_running_loop().time()
             result = await self.call(headers, "tools/call", {"name": "load_avatar_set", "arguments": {
-                "archive_path": str(archive), "mode": "layered", "timeout": 10}})
+                "archive_path": str(archive), "mode": "layered", "timeout": 30}})
             loaded = json.loads(result["content"][0]["text"])
             self.assertTrue(loaded["ok"], loaded)
             self.assertEqual(device.avatar, archive.read_bytes())
             self.assertEqual(loaded["bytes_transferred"], 537600)
+            # Exercise the real default rate over the full archive, rather
+            # than merely checking that the configuration or chunk size changed.
+            self.assertGreaterEqual(asyncio.get_running_loop().time() - started, 15)
             pcm = bytes(16000 * 2 // 5)
             async with self.client.post(self.url + "/pcm", data=pcm,
                 headers=dict(self.headers, **{"X-Sample-Rate": "16000", "Content-Type": "application/octet-stream"})) as response:
@@ -323,18 +332,19 @@ class RailwayIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 upload = asyncio.create_task(asyncio.to_thread(
                     reflex.call, "load_avatar_set", {
                         "archive_path": str(ROOT / "sprites/avatar_set_v1_16.bin"),
-                        "mode": "layered", "timeout": 5,
-                    }, timeout=8,
+                        "mode": "layered", "timeout": 30,
+                    }, timeout=40,
                 ))
                 try:
-                    await asyncio.wait_for(device.avatar_downloaded.wait(), 3)
+                    await asyncio.wait_for(device.avatar_requested.wait(), 3)
                     # Reflex polls device status while a long avatar request is
                     # pending in the same MCP session, as in the Railway logs.
                     status = await asyncio.to_thread(reflex.call, "get_status", timeout=5)
                     self.assertTrue(status["connected"], status)
+                    self.assertFalse(upload.done(), "Avatar transfer should still be pending while status is returned")
                 finally:
                     device.avatar_reply_allowed.set()
-                    loaded = await asyncio.wait_for(upload, 10)
+                    loaded = await asyncio.wait_for(upload, 40)
                 self.assertIsNotNone(loaded, "Background polling consumed the avatar response")
                 self.assertTrue(loaded.get("ok"), loaded)
                 self.assertEqual(loaded["bytes_transferred"], 537600)
