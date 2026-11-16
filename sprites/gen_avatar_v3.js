@@ -3,6 +3,8 @@
 //
 // 用法 / Usage:
 //   node gen_avatar_v3.js      →  ./avatar_set.bin   (1,536,000 bytes)
+//                            →  ./avatar_set_v1_16.bin (537,600 bytes)
+//   firmware-v1.16.0 uses the 14-frame compatibility file (6 faces + 3 eyes + 5 mouths).
 //
 // 输出格式 / Output format
 //   每帧 160x120 像素、RGB565 **little-endian**（低字节在前）→ 160*120*2 = 38,400 字节/帧
@@ -120,10 +122,8 @@ const mE      = B([...EYES,[11,12,4,1,"K"]]);     // "E" 音口型 / "E" viseme
 const mU      = B([...EYES,[12,12,2,2,"K"]]);     // "U" 音口型 / "U" viseme
 
 // --- 拼装 / Assemble -------------------------------------------------------
-// 前 24 帧是上游网关认识的标准布局（16 脸 + 3 眼 + 5 嘴），
-// 后 16 帧是本项目扩展的 B 帧，用于两帧循环动画。
-// The first 24 frames are the layout upstream expects; the trailing 16 are this
-// project's animation-B extension.
+// 扩展固件布局：16 脸 + 3 眼 + 5 嘴 + 16 张 B 帧，用于两帧循环动画。
+// Extended firmware layout: 16 faces + 3 eyes + 5 mouths + 16 animation-B frames.
 const facesA = FACES.map(f => f[0]);
 const facesB = FACES.map(f => f[1]);
 const out = Buffer.concat([
@@ -136,3 +136,15 @@ const out = Buffer.concat([
 const dest = __dirname + "/avatar_set.bin";
 fs.writeFileSync(dest, out);
 console.log(dest, out.length, out.length === 40*38400 ? "OK (40 frames)" : "SIZE ERROR");
+
+// The published firmware-v1.16.0 accepts exactly 14 frames in this order.
+// Reassemble the eyes/mouths after the first six faces; truncating the 40-frame
+// archive would put extra faces in the eye and mouth slots.
+const compatible = Buffer.concat([
+  ...facesA.slice(0, 6),
+  eyesOpen, eyesHalf, eyesClosed,
+  mClosed, mHalf, mOpen, mE, mU,
+]);
+const compatibleDest = __dirname + "/avatar_set_v1_16.bin";
+fs.writeFileSync(compatibleDest, compatible);
+console.log(compatibleDest, compatible.length, compatible.length === 14*38400 ? "OK (14 frames)" : "SIZE ERROR");

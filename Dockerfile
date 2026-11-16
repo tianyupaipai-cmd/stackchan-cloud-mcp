@@ -20,6 +20,7 @@ RUN PKG="$(python -c 'import stackchan_mcp, pathlib; print(pathlib.Path(stackcha
       bash patches/apply_patches.sh \
     && node sprites/gen_avatar_v3.js \
     && test "$(wc -c < sprites/avatar_set.bin)" -eq 1536000 \
+    && test "$(wc -c < sprites/avatar_set_v1_16.bin)" -eq 537600 \
     && useradd --create-home --uid 10001 stackchan \
     && chown -R stackchan:stackchan /app
 

@@ -20,8 +20,9 @@ LOG = logging.getLogger("railway")
 ROOT = Path(__file__).resolve().parent.parent
 HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length",
+    "te", "trailer", "transfer-encoding", "upgrade",
 }
+REQUEST_HEADERS_TO_REPLACE = {"host", "content-length"}
 
 
 def port(env: dict[str, str], key: str, default: int) -> int:
@@ -77,15 +78,19 @@ class Config:
         env.setdefault("STACKCHAN_EDGE_TTS_DEFAULT_VOICE", "zh-CN-XiaoxiaoNeural")
         env.setdefault("HF_HUB_DISABLE_XET", "1")
         env.setdefault("IDLE_MOTION", "0")
-        env.setdefault("AVATAR_SET_PATH", str(ROOT / "sprites/avatar_set.bin"))
+        env.setdefault("AVATAR_SET_PATH", str(ROOT / "sprites/avatar_set_v1_16.bin"))
         return cls(public_url, *ports, reflex, token, env)
 
 
-def forward_headers(headers, *, websocket: bool = False) -> dict[str, str]:
+def forward_headers(headers, *, request: bool = False, websocket: bool = False) -> dict[str, str]:
     connection_headers = {h.strip().lower() for h in headers.get("Connection", "").split(",")}
+    excluded = HOP_HEADERS | connection_headers
+    if request:
+        # aiohttp chooses the upstream host and frames streamed request bodies.
+        excluded |= REQUEST_HEADERS_TO_REPLACE
     return {
         key: value for key, value in headers.items()
-        if key.lower() not in HOP_HEADERS | connection_headers
+        if key.lower() not in excluded
         and not (websocket and key.lower().startswith("sec-websocket-"))
     }
 
@@ -151,11 +156,14 @@ def create_app(services: Services, client: ClientSession) -> web.Application:
         response = None
         try:
             async with client.request(
-                request.method, url, headers=forward_headers(request.headers),
+                request.method, url, headers=forward_headers(request.headers, request=True),
                 data=request.content.iter_chunked(65536) if request.can_read_body else None,
-                allow_redirects=False,
+                allow_redirects=False, auto_decompress=False,
             ) as upstream:
                 response = web.StreamResponse(status=upstream.status)
+                # Preserve Content-Length and the exact response bytes. The
+                # firmware rejects avatar downloads without the expected length;
+                # responses without one (such as SSE) can still stream normally.
                 for key, value in forward_headers(upstream.headers).items():
                     response.headers[key] = value
                 await response.prepare(request)
@@ -175,7 +183,7 @@ def create_app(services: Services, client: ClientSession) -> web.Application:
             raise web.HTTPUnauthorized(headers={"WWW-Authenticate": "Bearer"})
         try:
             upstream = await client.ws_connect(
-                f"http://127.0.0.1:{config.ws_port}/", headers=forward_headers(request.headers, websocket=True),
+                f"http://127.0.0.1:{config.ws_port}/", headers=forward_headers(request.headers, request=True, websocket=True),
                 max_msg_size=0, autoping=True,
             )
         except (ClientError, OSError, asyncio.TimeoutError):

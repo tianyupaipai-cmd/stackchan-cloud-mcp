@@ -85,6 +85,18 @@ Railway 负责公网 HTTPS/WSS，容器内部只需一个公开的 HTTP 端口�
 机器人保持连接 2.4 GHz Wi-Fi。保存后让它重新连接，再从 Kelivo 调用 `get_status`。
 应看到 `connected: true`、`initialized: true`，并列出设备工具。
 
+Railway 默认表情包适配上游已发布的 `firmware-v1.16.0`：14 帧、160×120、RGB565，
+共 537,600 字节，包含 `idle`、`happy`、`thinking`、`sad`、`surprised`、`embarrassed`
+六种表情及眼睛、嘴型帧。机器人上线后，反射弧会延迟 20 秒自动加载。
+需要手动重试时，在 Kelivo 调用 `load_avatar_set`：
+
+```json
+{"archive_path":"/app/sprites/avatar_set_v1_16.bin","mode":"layered","timeout":120}
+```
+
+确认返回 `ok: true` 后再调用 `set_avatar`。`/app/sprites/avatar_set.bin` 是保留给扩展固件的
+40 帧表情包；发布版 `firmware-v1.16.0` 无法直接加载它。
+
 可以用这句话做首次实机检查：
 
 > 先检查 StackChan 是否在线。在线的话，让它说“你好，我是你的桌面小伙伴”，再换成 happy 表情。
@@ -102,6 +114,7 @@ Railway 负责公网 HTTPS/WSS，容器内部只需一个公开的 HTTP 端口�
 | 变量 | 默认 / 用途 |
 | --- | --- |
 | `STACKCHAN_ENABLE_REFLEX` | `1`，启动断线补表情、触摸反馈和说完收表情；设 `0` 可关闭 |
+| `AVATAR_SET_PATH` | `/app/sprites/avatar_set_v1_16.bin`，适配发布版 `firmware-v1.16.0`；使用扩展固件时可覆盖 |
 | `IDLE_MOTION` | 此部署默认 `0`；设 `1` 开启待机小动作 |
 | `STACKCHAN_TTS_ENGINE` | `edge-tts` |
 | `STACKCHAN_EDGE_TTS_DEFAULT_VOICE` | `zh-CN-XiaoxiaoNeural` |
@@ -122,6 +135,8 @@ Kelivo 里的模型负责对话，Railway 网关负责工具执行；这里没�
 | Kelivo 返回 401 | 请求头名称、`Bearer ` 空格、密钥是否与 Railway 一致 |
 | 有工具但机器人不在线 | 固件是否匹配，`wss://.../ws`、网关密钥和 Wi-Fi 是否正确 |
 | 机器人连接后无法下载表情 | `STACKCHAN_PUBLIC_URL` / 公网域名是否正确，机器人能否访问 HTTPS |
+| 表情加载返回 `content_length_mismatch` | 部署保留下载响应 `Content-Length` 的最新转发代码；机器人会在读取文件前核对这个长度 |
+| 表情加载返回 `load_failed` | 检查表情包与固件布局；`firmware-v1.16.0` 使用 `avatar_set_v1_16.bin` 的 14 帧包，不能使用 40 帧包 |
 | 日志显示 avatar not loaded | 根据错误排查连接、素材或固件；不会把失败记录成上传成功 |
 | `say` 没有声音 | 查看 Edge TTS 联网及 Opus 日志，确认配套固件使用 WebSocket 协议 v1 |
 

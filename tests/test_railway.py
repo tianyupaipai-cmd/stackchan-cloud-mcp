@@ -1,6 +1,7 @@
 """Run with the gateway dependencies installed: python -m unittest discover -s tests -v."""
 import asyncio
 from contextlib import asynccontextmanager
+import gzip
 import hashlib
 import io
 import json
@@ -15,9 +16,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from aiohttp import ClientSession, ClientTimeout, WSMsgType, WSServerHandshakeError
+from aiohttp import ClientSession, ClientTimeout, WSMsgType, WSServerHandshakeError, web
+from aiohttp.test_utils import TestServer
 
-from cloud.railway_server import Config
+from cloud.railway_server import Config, Services, create_app
 from cloud import reflex
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +42,16 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("existing.example", config.env["MCP_HTTP_ALLOWED_HOSTS"])
         self.assertIn("robot.up.railway.app", config.env["MCP_HTTP_ALLOWED_HOSTS"])
         self.assertEqual(config.env["GATEWAY_LOG_SOURCE"], "stdin")
+        self.assertEqual(config.env["AVATAR_SET_PATH"], str(ROOT / "sprites/avatar_set_v1_16.bin"))
+
+    def test_default_avatar_matches_firmware_v1_16_frame_layout(self):
+        image_bytes = 160 * 120 * 2
+        compatible = (ROOT / "sprites/avatar_set_v1_16.bin").read_bytes()
+        extended = (ROOT / "sprites/avatar_set.bin").read_bytes()
+        self.assertEqual(len(compatible), 14 * image_bytes)
+        # Firmware slots: faces 0-5, eyes 6-8, mouths 9-13.
+        self.assertEqual(compatible[:6 * image_bytes], extended[:6 * image_bytes])
+        self.assertEqual(compatible[6 * image_bytes:], extended[16 * image_bytes:24 * image_bytes])
 
     def test_reflex_can_follow_supervisor_stdin_without_journalctl(self):
         with patch.dict(os.environ, {"GATEWAY_LOG_SOURCE": "stdin"}), \
@@ -62,6 +74,29 @@ class ConfigurationTests(unittest.TestCase):
             self.assertNotIn("avatar set pushed", output.getvalue())
             self.assertEqual(call.call_count, 1)
             restore.assert_not_called()
+
+
+class ProxyResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_compressed_download_keeps_advertised_length_and_wire_bytes(self):
+        payload = gzip.compress(b"RGB565 avatar payload" * 1000)
+
+        async def download(_request):
+            return web.Response(body=payload, headers={"Content-Encoding": "gzip"})
+
+        upstream_app = web.Application()
+        upstream_app.router.add_get("/avatar_set/test", download)
+        async with TestServer(upstream_app) as upstream, ClientSession(trust_env=False) as client:
+            config = Config.from_env({
+                "STACKCHAN_TOKEN": "test", "STACKCHAN_PUBLIC_URL": "http://127.0.0.1",
+                "CAPTURE_PORT": str(upstream.port),
+            })
+            async with TestServer(create_app(Services(config), client)) as proxy:
+                async with client.get(proxy.make_url("/avatar_set/test"), auto_decompress=False) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.content_length, len(payload))
+                    self.assertEqual(response.headers["Content-Encoding"], "gzip")
+                    self.assertNotIn("Transfer-Encoding", response.headers)
+                    self.assertEqual(await response.read(), payload)
 
 
 class MockDevice:
@@ -108,10 +143,24 @@ class MockDevice:
                 async with self.client.get(data["url"], headers={"Authorization": "Bearer " + data["token"]}) as response:
                     if response.status != 200:
                         raise AssertionError(f"Public avatar download returned {response.status}")
+                    # Match firmware-v1.16.0: reject missing or mismatched
+                    # Content-Length before reading the avatar payload.
+                    if response.content_length != data["expected_size"]:
+                        await self.ws.send_json({
+                            "type": "avatar_set_loaded", "ok": False,
+                            "checksum": data["checksum"], "error": "content_length_mismatch",
+                        })
+                        continue
                     self.avatar = await response.read()
                     checksum = "sha256:" + hashlib.sha256(self.avatar).hexdigest()
                     assert checksum == data["checksum"]
                     assert len(self.avatar) == data["expected_size"]
+                    if len(self.avatar) != 14 * 160 * 120 * 2:
+                        await self.ws.send_json({
+                            "type": "avatar_set_loaded", "ok": False,
+                            "checksum": checksum, "error": "load_failed",
+                        })
+                        continue
                 await self.ws.send_json({"type": "avatar_set_loaded", "ok": True, "checksum": checksum})
 
 
@@ -242,13 +291,13 @@ class RailwayIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_avatar_download_and_opus_audio_relay(self):
         async with self.device() as device:
             headers = await self.initialize()
-            archive = ROOT / "sprites/avatar_set.bin"
+            archive = ROOT / "sprites/avatar_set_v1_16.bin"
             result = await self.call(headers, "tools/call", {"name": "load_avatar_set", "arguments": {
                 "archive_path": str(archive), "mode": "layered", "timeout": 10}})
             loaded = json.loads(result["content"][0]["text"])
             self.assertTrue(loaded["ok"], loaded)
             self.assertEqual(device.avatar, archive.read_bytes())
-            self.assertEqual(loaded["bytes_transferred"], 1536000)
+            self.assertEqual(loaded["bytes_transferred"], 537600)
             pcm = bytes(16000 * 2 // 5)
             async with self.client.post(self.url + "/pcm", data=pcm,
                 headers=dict(self.headers, **{"X-Sample-Rate": "16000", "Content-Type": "application/octet-stream"})) as response:
